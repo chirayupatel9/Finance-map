@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import * as d3 from 'd3';
-import { TreemapNode, Stock } from '../types';
+import type { TreemapNode, Stock } from '../types';
 
 interface TreemapProps {
   data: TreemapNode;

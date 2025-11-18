@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import axios from 'axios';
 import { Treemap } from './components/Treemap';
-import { HeatmapData, TreemapNode, Sector } from './types';
+import type { HeatmapData, TreemapNode, Sector } from './types';
 import './App.css';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001';
