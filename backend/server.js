@@ -7,8 +7,8 @@ require('dotenv').config();
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-// Cache for 5 minutes
-const cache = new NodeCache({ stdTTL: 300 });
+// Cache for 15 minutes (increased to reduce API calls since full fetch takes ~6 minutes)
+const cache = new NodeCache({ stdTTL: 900 });
 
 app.use(cors());
 app.use(express.json());
@@ -37,36 +37,57 @@ const getAllTickers = () => {
   return Array.from(allTickers);
 };
 
-// Fetch quote data from Finnhub
-const fetchQuote = async (symbol) => {
+// Utility function for delays
+const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+// Rate limiter configuration
+// Finnhub free tier: 60 API calls/minute
+// Strategy: 1.1s delay between requests = ~55 requests/minute (safely under limit)
+// With 2 requests per ticker (quote + profile), we can process ~27 tickers/minute
+const RATE_LIMIT = {
+  maxRetries: 5,
+  initialBackoff: 2000, // 2 seconds
+  maxBackoff: 32000, // 32 seconds
+  requestDelay: 1100, // 1.1 seconds between requests (allows ~55 requests/minute)
+};
+
+// Fetch with retry logic and exponential backoff
+const fetchWithRetry = async (url, params, retryCount = 0) => {
   try {
-    const response = await axios.get(`https://finnhub.io/api/v1/quote`, {
-      params: {
-        symbol: symbol,
-        token: process.env.FINNHUB_API_KEY
-      }
-    });
+    await sleep(RATE_LIMIT.requestDelay); // Delay before each request
+    const response = await axios.get(url, { params });
     return response.data;
   } catch (error) {
-    console.error(`Error fetching quote for ${symbol}:`, error.message);
+    // Handle 429 (Too Many Requests) with exponential backoff
+    if (error.response?.status === 429 && retryCount < RATE_LIMIT.maxRetries) {
+      const backoffTime = Math.min(
+        RATE_LIMIT.initialBackoff * Math.pow(2, retryCount),
+        RATE_LIMIT.maxBackoff
+      );
+      console.log(`Rate limited. Retrying in ${backoffTime}ms (attempt ${retryCount + 1}/${RATE_LIMIT.maxRetries})...`);
+      await sleep(backoffTime);
+      return fetchWithRetry(url, params, retryCount + 1);
+    }
+
+    console.error(`Error fetching ${url}:`, error.message);
     return null;
   }
 };
 
+// Fetch quote data from Finnhub
+const fetchQuote = async (symbol) => {
+  return fetchWithRetry('https://finnhub.io/api/v1/quote', {
+    symbol: symbol,
+    token: process.env.FINNHUB_API_KEY
+  });
+};
+
 // Fetch company profile from Finnhub
 const fetchProfile = async (symbol) => {
-  try {
-    const response = await axios.get(`https://finnhub.io/api/v1/stock/profile2`, {
-      params: {
-        symbol: symbol,
-        token: process.env.FINNHUB_API_KEY
-      }
-    });
-    return response.data;
-  } catch (error) {
-    console.error(`Error fetching profile for ${symbol}:`, error.message);
-    return null;
-  }
+  return fetchWithRetry('https://finnhub.io/api/v1/stock/profile2', {
+    symbol: symbol,
+    token: process.env.FINNHUB_API_KEY
+  });
 };
 
 // Main endpoint to get heatmap data
@@ -83,15 +104,18 @@ app.get('/api/heatmap', async (req, res) => {
     const tickers = getAllTickers();
     const stockData = [];
 
-    // Fetch data for all stocks (in batches to avoid rate limits)
-    const batchSize = 10;
-    for (let i = 0; i < tickers.length; i += batchSize) {
-      const batch = tickers.slice(i, i + batchSize);
-      const promises = batch.map(async (ticker) => {
-        const [quote, profile] = await Promise.all([
-          fetchQuote(ticker),
-          fetchProfile(ticker)
-        ]);
+    // Fetch data for all stocks sequentially to respect rate limits
+    // With requestDelay of 1.1s per request and 2 requests per ticker,
+    // this will take ~2.2s per ticker (well under 60 requests/minute)
+    console.log(`Processing ${tickers.length} tickers...`);
+
+    for (let i = 0; i < tickers.length; i++) {
+      const ticker = tickers[i];
+
+      try {
+        // Fetch quote and profile sequentially (not in parallel) to better control rate
+        const quote = await fetchQuote(ticker);
+        const profile = await fetchProfile(ticker);
 
         if (quote && quote.c > 0) {
           // Find sector for this ticker
@@ -103,7 +127,7 @@ app.get('/api/heatmap', async (req, res) => {
             }
           }
 
-          return {
+          stockData.push({
             symbol: ticker,
             name: profile?.name || ticker,
             price: quote.c,
@@ -116,19 +140,19 @@ app.get('/api/heatmap', async (req, res) => {
             low: quote.l,
             open: quote.o,
             previousClose: quote.pc
-          };
+          });
+
+          // Log progress every 10 stocks
+          if ((i + 1) % 10 === 0) {
+            console.log(`Processed ${i + 1}/${tickers.length} tickers...`);
+          }
         }
-        return null;
-      });
-
-      const batchResults = await Promise.all(promises);
-      stockData.push(...batchResults.filter(data => data !== null));
-
-      // Small delay between batches to respect rate limits
-      if (i + batchSize < tickers.length) {
-        await new Promise(resolve => setTimeout(resolve, 1000));
+      } catch (error) {
+        console.error(`Error processing ticker ${ticker}:`, error.message);
       }
     }
+
+    console.log(`Successfully fetched data for ${stockData.length} stocks`);
 
     // Group by sector and calculate sector totals
     const sectorData = {};

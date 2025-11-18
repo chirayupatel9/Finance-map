@@ -27,8 +27,8 @@ function App() {
 
   useEffect(() => {
     fetchData();
-    // Refresh data every 5 minutes
-    const interval = setInterval(fetchData, 5 * 60 * 1000);
+    // Refresh data every 15 minutes (matches backend cache TTL)
+    const interval = setInterval(fetchData, 15 * 60 * 1000);
     return () => clearInterval(interval);
   }, []);
 
@@ -106,7 +106,8 @@ function App() {
         <div className="text-center">
           <div className="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-white mb-4"></div>
           <div className="text-white text-xl">Loading market data...</div>
-          <div className="text-gray-400 text-sm mt-2">This may take a minute for the first load</div>
+          <div className="text-gray-400 text-sm mt-2">First load may take 5-7 minutes due to API rate limits</div>
+          <div className="text-gray-500 text-xs mt-1">Subsequent requests will be cached for 15 minutes</div>
         </div>
       </div>
     );
