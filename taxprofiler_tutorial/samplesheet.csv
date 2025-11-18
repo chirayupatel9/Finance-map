@@ -1,0 +1,2 @@
+sample,run_accession,instrument_platform,fastq_1,fastq_2,fasta
+evol1,run1,ILLUMINA,/ifs/groups/eces450650Grp/data/mappings/evol1.sorted.unmapped.R1.fastq,,

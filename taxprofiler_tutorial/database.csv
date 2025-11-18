@@ -1,0 +1,4 @@
+tool,db_name,db_params,db_path
+kraken2,kraken2-standard,--quick,/path/to/kraken2/standard_db
+centrifuge,centrifuge-bacteria,,/path/to/centrifuge/bacteria_db
+kaiju,kaiju-refseq,,-a greedy -e 3,/path/to/kaiju/refseq_db
